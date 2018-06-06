@@ -315,7 +315,8 @@ class DefaultImageAugmenter : public ImageAugmenter {
     // color space augmentation
     if (param_.random_h != 0 || param_.random_s != 0 || param_.random_l != 0) {
       std::uniform_real_distribution<float> rand_uniform(0, 1);
-      cvtColor(res, res, CV_BGR2HLS);
+      //cvtColor(res, res, CV_BGR2HLS);
+      cvtColor(res, res, cv::COLOR_BGR2HLS);
       int h = rand_uniform(*prnd) * param_.random_h * 2 - param_.random_h;
       int s = rand_uniform(*prnd) * param_.random_s * 2 - param_.random_s;
       int l = rand_uniform(*prnd) * param_.random_l * 2 - param_.random_l;
@@ -331,7 +332,8 @@ class DefaultImageAugmenter : public ImageAugmenter {
           }
         }
       }
-      cvtColor(res, res, CV_HLS2BGR);
+      //cvtColor(res, res, CV_HLS2BGR);
+      cvtColor(res, res, cv::COLOR_HLS2BGR);
     }
     return res;
   }
