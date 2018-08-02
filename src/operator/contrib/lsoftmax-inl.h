@@ -25,6 +25,7 @@ enum LSoftmaxOpOutputs {kOut, kDataNorm, kWeightNorm};
 enum LSoftmaxResource {kTempSpace};
 }
 
+/*
 struct LSoftmaxParam : public dmlc::Parameter<LSoftmaxParam> {
   int margin;
   float beta;
@@ -47,6 +48,37 @@ struct LSoftmaxParam : public dmlc::Parameter<LSoftmaxParam> {
     .describe("Log for beta change");
   }
 };
+*/
+
+struct LSoftmaxParam : public dmlc::Parameter<LSoftmaxParam> {
+    int margin;
+    float base;
+    float gamma;
+    float power;
+    float lambda_min;
+    int begin_iter;
+    int num_hidden;
+    bool verbose;
+    DMLC_DECLARE_PARAMETER(LSoftmaxParam) {
+        DMLC_DECLARE_FIELD(margin).set_default(2).set_lower_bound(1)
+        .describe("LSoftmax margin");
+        DMLC_DECLARE_FIELD(base).set_default(0).set_lower_bound(0)
+        .describe("lambda = max(lambda_min, base*((1+gamma*iter)**(-power)))");
+        DMLC_DECLARE_FIELD(gamma).set_default(0).set_lower_bound(0)
+        .describe("lambda = max(lambda_min, base*((1+gamma*iter)**(-power)))");
+        DMLC_DECLARE_FIELD(power).set_default(0).set_lower_bound(0)
+        .describe("lambda = max(lambda_min, base*((1+gamma*iter)**(-power)))");
+        DMLC_DECLARE_FIELD(lambda_min).set_default(0).set_lower_bound(0)
+        .describe("lambda = max(lambda_min, base*((1+gamma*iter)**(-power)))");
+        DMLC_DECLARE_FIELD(begin_iter).set_default(0).set_lower_bound(0)
+        .describe("begin iter for computing lambda");
+        DMLC_DECLARE_FIELD(num_hidden).set_lower_bound(1)
+        .describe("Number of hidden nodes of the output");
+        DMLC_DECLARE_FIELD(verbose).set_default(false)
+        .describe("Log for lambda change");
+    }
+};
+
 
 template<typename xpu, typename DType>
 class LSoftmaxOp : public Operator {
@@ -66,7 +98,10 @@ class LSoftmaxOp : public Operator {
       k_table_.push_back(std::cos(i * pi / margin));
       c_table_.push_back(factor);
     }
-    next_beta_ = param.beta * 0.1f;
+    iter_ = static_cast<double>(param.begin_iter);
+    lambda_ = std::max((double)param.lambda_min,
+                param.base*std::pow(1+(double)(param.gamma*iter_), -(double)param.power));
+    next_beta_ = lambda_ * 1.1f;
   }
 
   virtual void Forward(const OpContext &ctx,
@@ -102,7 +137,8 @@ class LSoftmaxOp : public Operator {
     if (ctx.is_train) {
       // large margin fully connected
       const int margin = param_.margin;
-      const DType beta = static_cast<DType>(param_.beta);
+      //const DType beta = static_cast<DType>(param_.beta);
+      const DType beta = static_cast<DType>(lambda_);
       Tensor<cpu, 1, DType> k_table_cpu(k_table_.data(), Shape1(k_table_.size()));
       Tensor<cpu, 1, DType> c_table_cpu(c_table_.data(), Shape1(c_table_.size()));
       Tensor<xpu, 1, DType> k_table_xpu(Shape1(k_table_.size()));
@@ -157,7 +193,8 @@ class LSoftmaxOp : public Operator {
     w_grad = dot(o_grad.T(), x);
     // large margin fully connected
     const int margin = param_.margin;
-    const DType beta = static_cast<DType>(param_.beta);
+    // const DType beta = static_cast<DType>(param_.beta);
+    const DType beta = static_cast<DType>(lambda_); 
     Tensor<cpu, 1, DType> k_table_cpu(k_table_.data(), Shape1(k_table_.size()));
     Tensor<cpu, 1, DType> c_table_cpu(c_table_.data(), Shape1(c_table_.size()));
     Tensor<xpu, 1, DType> k_table_xpu(Shape1(k_table_.size()));
@@ -173,6 +210,8 @@ class LSoftmaxOp : public Operator {
     FreeSpace(&k_table_xpu);
     FreeSpace(&c_table_xpu);
     // dirty hack, should also work for multi device
+    
+    /*
     param_.beta *= param_.scale;
     param_.beta = std::max(param_.beta, param_.beta_min);
     if (param_.beta < next_beta_) {
@@ -181,6 +220,16 @@ class LSoftmaxOp : public Operator {
         LOG(INFO) << "LSoftmax changes beta to " << param_.beta;
       }
     }
+    */
+    iter_ += 1;
+    lambda_ = std::max((double)param_.lambda_min,
+                    param_.base*std::pow(1+(double)(param_.gamma*iter_), -(double)param_.power));
+    if (lambda_ < next_beta_) {
+        next_beta_ *= 0.1f;
+        if (param_.verbose) {
+            LOG(INFO) << "LSoftmax changes lambda to " << lambda_ << ", current iter is " << iter_;
+        }
+    }
   }
 
  private:
@@ -188,7 +237,9 @@ class LSoftmaxOp : public Operator {
   // global lookup table
   std::vector<DType> k_table_;
   std::vector<DType> c_table_;
-  float next_beta_;
+  double next_beta_;
+  double iter_ = 0;
+  double lambda_ = 0;
 };  // class LSoftmaxOp
 
 template<typename xpu>
